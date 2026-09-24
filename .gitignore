@@ -1,0 +1,18 @@
+# Virtual environment (recreate with: pip install -r requirements.txt)
+venv/
+
+# Trained model folders (too large for GitHub - share separately)
+whisper-bangla-trained/
+banglat5-summary-trained/
+
+# Evaluation results (contain dataset transcripts)
+eval_results_*.csv
+summary_results_*.csv
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Windows system files
+Thumbs.db
+desktop.ini

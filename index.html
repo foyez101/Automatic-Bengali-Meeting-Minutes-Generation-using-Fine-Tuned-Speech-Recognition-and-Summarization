@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>বাংলা কণ্ঠ → সারাংশ | Bangla Speech to Summary</title>
+<style>
+  :root {
+    --bg: #0b1f1d;
+    --bg-elevated: #102b28;
+    --panel: #12332f;
+    --border: #1f4843;
+    --text: #eaf2f0;
+    --text-dim: #9fbdb7;
+    --accent: #e8a33d;
+    --accent-dim: #c98a2e;
+    --accent-soft: rgba(232, 163, 61, 0.12);
+    --success: #6fbf9a;
+    --error: #e0705c;
+    --font-display: "Fraunces", "Georgia", serif;
+    --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* Ambient backdrop: faint river-delta contour lines */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(232,163,61,0.08), transparent),
+      repeating-linear-gradient(115deg, transparent, transparent 58px, rgba(255,255,255,0.015) 58px, rgba(255,255,255,0.015) 59px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 56px 24px 80px;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 14px;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: clamp(1.9rem, 4vw, 2.6rem);
+    margin: 0 0 12px;
+    letter-spacing: -0.01em;
+  }
+
+  h1 .bn { display: block; font-size: 0.62em; color: var(--text-dim); font-weight: 400; margin-top: 6px; }
+
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 0.98rem;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  /* Upload panel */
+  .upload-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 36px 28px;
+    margin-top: 36px;
+    text-align: center;
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+
+  .upload-panel.dragover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .waveform {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 44px;
+    margin-bottom: 20px;
+  }
+
+  .waveform span {
+    display: inline-block;
+    width: 4px;
+    background: var(--accent-dim);
+    border-radius: 2px;
+    opacity: 0.55;
+  }
+
+  .waveform.active span {
+    animation: bounce 0.9s ease-in-out infinite;
+    opacity: 1;
+  }
+
+  @keyframes bounce {
+    0%, 100% { transform: scaleY(0.4); }
+    50% { transform: scaleY(1); }
+  }
+
+  #audioInput { display: none; }
+
+  .file-label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-bottom: 18px;
+    min-height: 1.2em;
+    word-break: break-all;
+  }
+
+  .btn {
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 0.95rem;
+    border: none;
+    border-radius: 9px;
+    padding: 13px 28px;
+    cursor: pointer;
+    transition: transform 0.12s ease, filter 0.12s ease, opacity 0.2s ease;
+  }
+  .btn:active { transform: scale(0.97); }
+
+  .btn-choose {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    margin-right: 10px;
+  }
+  .btn-choose:hover { border-color: var(--accent-dim); color: var(--accent); }
+
+  .btn-run {
+    background: var(--accent);
+    color: #1a1006;
+  }
+  .btn-run:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn-run:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .hint {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-top: 16px;
+    opacity: 0.75;
+  }
+
+  /* Status */
+  #statusBox {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    margin-top: 24px;
+    padding: 14px 18px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-family: var(--font-mono);
+  }
+  #statusBox.info { display: flex; background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(232,163,61,0.3); }
+  #statusBox.error { display: flex; background: rgba(224,112,92,0.1); color: var(--error); border: 1px solid rgba(224,112,92,0.3); }
+
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(232,163,61,0.3);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Results */
+  .results { margin-top: 32px; display: none; }
+  .results.visible { display: block; animation: fadeUp 0.4s ease; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .result-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 26px;
+    margin-bottom: 18px;
+  }
+
+  .result-card .label {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .copy-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  .copy-btn:hover { color: var(--accent); border-color: var(--accent-dim); }
+
+  .result-text {
+    font-family: var(--font-mono);
+    font-size: 1.02rem;
+    line-height: 1.75;
+    white-space: pre-wrap;
+    color: var(--text);
+  }
+
+  .result-card.summary { border-color: rgba(232,163,61,0.25); }
+  .result-card.summary .result-text { font-family: var(--font-body); font-size: 1.05rem; }
+
+  .meta-row {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 56px;
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+  }
+
+  @media (max-width: 480px) {
+    .upload-panel { padding: 28px 18px; }
+    .btn-choose { display: block; width: 100%; margin: 0 0 10px; }
+    .btn-run { display: block; width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Speech → Text → Summary</div>
+    <h1>Bangla Speech to Summary<span class="bn">বাংলা কণ্ঠ থেকে সারাংশ</span></h1>
+    <p class="subtitle">Upload an audio clip. A fine-tuned Whisper model transcribes it, then a fine-tuned mT5 model summarizes the transcript — automatically, one after the other.</p>
+  </header>
+
+  <div class="upload-panel" id="uploadPanel">
+    <div class="waveform" id="waveform">
+      <span style="height:14px"></span><span style="height:26px"></span><span style="height:18px"></span>
+      <span style="height:34px"></span><span style="height:20px"></span><span style="height:30px"></span>
+      <span style="height:16px"></span><span style="height:24px"></span><span style="height:12px"></span>
+    </div>
+
+    <div class="file-label" id="fileLabel">No file selected — choose an audio file or drag it here</div>
+
+    <input type="file" id="audioInput" accept="audio/*">
+    <button class="btn btn-choose" id="chooseBtn" type="button">Choose Audio File</button>
+    <button class="btn btn-run" id="runBtn" type="button" disabled>Transcribe &amp; Summarize</button>
+
+    <div class="hint">Supported: MP3, WAV, WEBM, OGG · Max 25MB</div>
+  </div>
+
+  <div id="statusBox"></div>
+
+  <div class="results" id="results">
+    <div class="result-card">
+      <div class="label">
+        <span>Transcript</span>
+        <button class="copy-btn" data-copy="transcriptText">Copy</button>
+      </div>
+      <div class="result-text" id="transcriptText"></div>
+    </div>
+
+    <div class="result-card summary">
+      <div class="label">
+        <span>Summary</span>
+        <button class="copy-btn" data-copy="summaryText">Copy</button>
+      </div>
+      <div class="result-text" id="summaryText"></div>
+    </div>
+
+    <div class="meta-row" id="metaRow"></div>
+  </div>
+
+  <footer>Bangla ASR + Summarization pipeline · Whisper-small (fine-tuned) → mT5-small (fine-tuned)</footer>
+</div>
+
+<script>
+  // ============================================================
+  // Configuration
+  // ============================================================
+  // Since this page is served BY the same FastAPI server (app.py), we call
+  // a relative path — no separate host/port needed. If you later host the
+  // frontend somewhere else, change this back to an absolute URL, e.g.
+  // "https://your-api-domain.com/api/transcribe-summarize".
+  const API_ENDPOINT = "/api/transcribe-summarize";
+
+  const uploadPanel = document.getElementById("uploadPanel");
+  const audioInput = document.getElementById("audioInput");
+  const chooseBtn = document.getElementById("chooseBtn");
+  const runBtn = document.getElementById("runBtn");
+  const fileLabel = document.getElementById("fileLabel");
+  const waveform = document.getElementById("waveform");
+  const statusBox = document.getElementById("statusBox");
+  const results = document.getElementById("results");
+  const transcriptText = document.getElementById("transcriptText");
+  const summaryText = document.getElementById("summaryText");
+  const metaRow = document.getElementById("metaRow");
+
+  let selectedFile = null;
+
+  function setStatus(message, type) {
+    statusBox.className = type; // "info" | "error" | ""
+    if (!type) { statusBox.innerHTML = ""; return; }
+    const spinner = type === "info" ? '<span class="spinner"></span>' : "";
+    statusBox.innerHTML = `${spinner}<span>${message}</span>`;
+  }
+
+  function selectFile(file) {
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) {
+      setStatus("File is too large — please choose a file under 25MB.", "error");
+      return;
+    }
+    selectedFile = file;
+    fileLabel.textContent = `Selected: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+    runBtn.disabled = false;
+    setStatus("", null);
+  }
+
+  chooseBtn.addEventListener("click", () => audioInput.click());
+  audioInput.addEventListener("change", (e) => selectFile(e.target.files[0]));
+
+  // Drag and drop
+  ["dragenter", "dragover"].forEach(evt =>
+    uploadPanel.addEventListener(evt, (e) => { e.preventDefault(); uploadPanel.classList.add("dragover"); })
+  );
+  ["dragleave", "drop"].forEach(evt =>
+    uploadPanel.addEventListener(evt, (e) => { e.preventDefault(); uploadPanel.classList.remove("dragover"); })
+  );
+  uploadPanel.addEventListener("drop", (e) => {
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith("audio")) selectFile(file);
+    else setStatus("Please drop an audio file.", "error");
+  });
+
+  // Copy buttons
+  document.querySelectorAll(".copy-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const target = document.getElementById(btn.dataset.copy);
+      navigator.clipboard.writeText(target.textContent).then(() => {
+        const original = btn.textContent;
+        btn.textContent = "Copied";
+        setTimeout(() => { btn.textContent = original; }, 1200);
+      });
+    });
+  });
+
+  runBtn.addEventListener("click", async () => {
+    if (!selectedFile) return;
+
+    runBtn.disabled = true;
+    chooseBtn.disabled = true;
+    waveform.classList.add("active");
+    results.classList.remove("visible");
+    setStatus("Processing audio — transcribing, then summarizing…", "info");
+
+    const formData = new FormData();
+    formData.append("audio", selectedFile);
+
+    try {
+      const response = await fetch(API_ENDPOINT, { method: "POST", body: formData });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `Request failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      transcriptText.textContent = data.transcript || "(empty)";
+      summaryText.textContent = data.summary || "(empty)";
+      metaRow.innerHTML = `
+        <span>Audio duration: ${data.duration_sec}s</span>
+        <span>Processed in: ${data.processing_time_sec}s</span>
+      `;
+
+      results.classList.add("visible");
+      setStatus("", null);
+    } catch (err) {
+      setStatus(`Something went wrong: ${err.message}`, "error");
+    } finally {
+      runBtn.disabled = false;
+      chooseBtn.disabled = false;
+      waveform.classList.remove("active");
+    }
+  });
+</script>
+
+</body>
+</html>

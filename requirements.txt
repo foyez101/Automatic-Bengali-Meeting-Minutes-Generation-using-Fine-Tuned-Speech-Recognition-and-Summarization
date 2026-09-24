@@ -1,0 +1,20 @@
+# Bangla Speech-to-Summary Project
+# Python dependencies for app.py + inference.py
+#
+# Recommended: Python 3.10 or newer
+# Install with:
+#   python -m pip install -r requirements.txt
+
+fastapi
+uvicorn[standard]
+python-multipart
+
+numpy
+torch
+librosa
+soundfile
+
+transformers
+sentencepiece
+safetensors
+jiwer
