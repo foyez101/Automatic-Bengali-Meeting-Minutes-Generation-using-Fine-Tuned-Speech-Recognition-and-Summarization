@@ -2,7 +2,7 @@
 
 A web app that turns Bangla speech into a written transcript and a short summary. Upload an audio clip, and the pipeline runs automatically:
 
-**Audio → Speech recognition (fine-tuned Whisper) → Transcript → Summarization (fine-tuned BanglaT5) → Summary**
+**Audio → Speech recognition (fine-tuned Whisper-small) → Transcript → Summarization (fine-tuned BanglaT5) → Summary**
 
 Built as part of a thesis project on a Bengali-English code-switched speech dataset for generating meeting minutes.
 
@@ -17,13 +17,15 @@ Built as part of a thesis project on a Bengali-English code-switched speech data
 ## Project structure
 
 ```
-app.py                      FastAPI server (serves the web page and the API)
-inference.py                Loads both models and runs the transcribe → summarize pipeline
-evaluate.py                 Measures accuracy (WER, CER, ROUGE) on a test folder
-index.html                  Web interface
-requirements.txt            Python dependencies
-whisper-bangla-trained/     Fine-tuned Whisper model (not in repo, see below)
-banglat5-summary-trained/   Fine-tuned BanglaT5 model (not in repo, see below)
+app.py                              FastAPI server (serves the web page and the API)
+inference.py                        Loads both models and runs the transcribe -> summarize pipeline
+evaluate.py                         Measures accuracy (WER, CER, ROUGE) on a test folder
+check_dataset.py                    Checks a speech/text/summary dataset before training
+split_dataset.py                    Creates the fixed 80/10/10 train/val/test split
+index.html                          Web interface
+requirements.txt                    Python dependencies
+whisper-bangla-trained/             Fine-tuned Whisper model (not in repo, see below)
+banglat5-summary-retrained-base/    Fine-tuned BanglaT5 summarizer (not in repo, see below)
 ```
 
 ## Requirements
@@ -43,7 +45,13 @@ Place both folders directly in the project root:
 
 ```
 whisper-bangla-trained/
-banglat5-summary-trained/
+banglat5-summary-retrained-base/
+```
+
+The summarizer is [BanglaT5](https://huggingface.co/csebuetnlp/banglat5) fine-tuned on 928 transcript–summary pairs from the project dataset (80/10/10 train/validation/test split). Its folder must contain `spiece.model`; if it is missing, copy it from the original BanglaT5:
+
+```powershell
+python -c "from huggingface_hub import hf_hub_download; import shutil; p = hf_hub_download('csebuetnlp/banglat5', 'spiece.model'); shutil.copy(p, 'banglat5-summary-retrained-base/spiece.model')"
 ```
 
 ## Setup
@@ -56,6 +64,11 @@ python -m venv venv
 
 # 2. Install dependencies
 python -m pip install -r requirements.txt
+
+# 3. Install the BanglaT5 text normalizer (required by the summarizer).
+#    --no-deps skips its outdated pinned dependencies; compatible versions
+#    of emoji, ftfy and regex come from requirements.txt.
+python -m pip install --no-deps git+https://github.com/csebuetnlp/normalizer
 ```
 
 If PowerShell blocks the activate script, run this first (affects the current terminal only):
@@ -111,11 +124,23 @@ Settings at the top of `inference.py`:
 | `CHUNK_MAX_S` | 10.0 | Maximum audio length per ASR chunk (seconds) |
 | `SILENCE_TOP_DB` | 30 | Pause-detection sensitivity |
 | `ASR_NUM_BEAMS` | 4 | Lower to 1–2 for faster transcription on CPU |
-| `SUMMARY_MIN_RATIO` / `SUMMARY_MAX_RATIO` | 0.35 / 0.60 | Summary length relative to the transcript |
-| `SUMMARY_LENGTH_PENALTY` | 1.5 | Values above 1.0 favor longer summaries |
+| `MT5_DIR` | `banglat5-summary-retrained-base` | Summarizer model folder |
+| `SUMMARY_USE_NORMALIZER` | True | Apply the BanglaT5 normalizer before summarizing (required for the retrained model) |
+| `SUMMARY_NUM_BEAMS` | 4 | Beam search width for summaries |
+
+## Results
+
+Summarizer, on the 116 held-out test clips (reference transcripts as input):
+
+| Model | ROUGE-1 | ROUGE-2 | ROUGE-L | Avg. summary words |
+|---|---|---|---|---|
+| Previous summarizer | 15.7% | 4.4% | 14.5% | 6.5 |
+| BanglaT5, retrained | 30.4% | 11.1% | 25.3% | 21.4 |
+
+Reference summaries average 24.4 words.
 
 ## Known limitations
 
 - Transcripts are often phonetically correct but misspelled, especially for conjuncts (যুক্তাক্ষর) and vowel signs
-- Summaries can be short or start mid-sentence, and forcing longer summaries can introduce invented content
+- Summaries can swap names and numbers for similar-looking ones and can repeat words; ROUGE does not capture factual errors, so outputs should be checked
 - Processing is slow on CPU

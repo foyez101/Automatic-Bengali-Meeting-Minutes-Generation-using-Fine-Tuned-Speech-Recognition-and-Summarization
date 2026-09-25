@@ -23,6 +23,11 @@ import numpy as np
 import torch
 import librosa
 
+try:
+    from normalizer import normalize as bn_normalize
+except ImportError:
+    bn_normalize = None
+
 from transformers import (
     WhisperForConditionalGeneration,
     WhisperFeatureExtractor,
@@ -39,7 +44,11 @@ from transformers import (
 # folder, or set the MODEL_ROOT environment variable to point elsewhere.
 MODEL_ROOT = Path(os.environ.get("MODEL_ROOT", "."))
 WHISPER_DIR = MODEL_ROOT / "whisper-bangla-trained"
-MT5_DIR = MODEL_ROOT / "banglat5-summary-trained"
+# Summarizer: BanglaT5 retrained on the full dataset (Kaggle, v2 notebook).
+# Change to "banglat5-summary-trained" to go back to the old model
+# (and set SUMMARY_USE_NORMALIZER = False for it).
+MT5_DIR = MODEL_ROOT / "banglat5-summary-retrained-base"
+SUMMARY_USE_NORMALIZER = True   # the retrained BanglaT5 was trained on normalized text
 
 SAMPLE_RATE = 16000
 
@@ -52,13 +61,10 @@ SILENCE_TOP_DB = 30     # how quiet (dB below peak) counts as a clear pause; low
 CUT_SEARCH_S = 3.0      # if no clear pause, cut at the quietest point in the last N seconds before the limit
 ASR_NUM_BEAMS = 4       # lower to 1-2 for faster (slightly less accurate) transcription on CPU
 
-# Summary length: scaled to the input instead of a fixed tiny minimum, so the
-# model cannot stop after one short sentence. Lengths are in tokens.
-SUMMARY_MIN_RATIO = 0.35     # summary is at least ~35% of the input length...
-SUMMARY_MAX_RATIO = 0.60     # ...and at most ~60%
-SUMMARY_MIN_TOKENS = 30      # never shorter than this
-SUMMARY_MAX_TOKENS = 256     # never longer than this
-SUMMARY_LENGTH_PENALTY = 1.5 # >1.0 makes beam search prefer longer outputs
+# Summary generation: the retrained model learned summary length from the
+# data, so no minimum length is forced (forcing it caused invented content).
+SUMMARY_MAX_TOKENS = 256
+SUMMARY_NUM_BEAMS = 4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # FFmpeg is found automatically from PATH, so this works on any PC
@@ -81,6 +87,15 @@ asr_feature_extractor = WhisperFeatureExtractor.from_pretrained(str(WHISPER_DIR)
 asr_tokenizer = WhisperTokenizer.from_pretrained(str(WHISPER_DIR))
 asr_processor = WhisperProcessor(feature_extractor=asr_feature_extractor, tokenizer=asr_tokenizer)
 asr_model.eval()
+
+if SUMMARY_USE_NORMALIZER and bn_normalize is None:
+    raise RuntimeError(
+        "The Bangla normalizer is not installed. In the venv run:\n"
+        '  python -m pip install "emoji==1.7.0" ftfy regex\n'
+        "  python -m pip install --no-deps git+https://github.com/csebuetnlp/normalizer"
+    )
+if not MT5_DIR.exists():
+    raise RuntimeError(f"Summarizer model folder not found: {MT5_DIR.resolve()}")
 
 summ_model = AutoModelForSeq2SeqLM.from_pretrained(str(MT5_DIR)).to(DEVICE)
 summ_tokenizer = AutoTokenizer.from_pretrained(str(MT5_DIR), use_fast=False)
@@ -235,21 +250,14 @@ def _transcribe_chunk(audio_chunk: np.ndarray, num_beams: int, max_new_tokens: i
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _length_targets(n_tokens: int) -> tuple:
-    """Returns (min_length, max_length) for a summary of an input of n_tokens."""
-    min_len = int(n_tokens * SUMMARY_MIN_RATIO)
-    min_len = max(SUMMARY_MIN_TOKENS, min(min_len, SUMMARY_MAX_TOKENS - 20))
-    max_len = int(n_tokens * SUMMARY_MAX_RATIO)
-    max_len = max(min_len + 20, min(max_len, SUMMARY_MAX_TOKENS))
-    return min_len, max_len
-
-
-def summarize(text: str, num_beams: int = 4, max_input_tokens: int = 480) -> str:
+def summarize(text: str, num_beams: int = SUMMARY_NUM_BEAMS, max_input_tokens: int = 480) -> str:
     """Summarizes text of ANY length. The model accepts ~512 input tokens at
     once, so long transcripts are split into chunks, each chunk is
     summarized, and if the combined chunk-summaries are still too long they
-    are summarized again (a 'map-reduce' strategy). Summary length scales
-    with input length (see SUMMARY_* settings)."""
+    are summarized again (a 'map-reduce' strategy)."""
+
+    if SUMMARY_USE_NORMALIZER:
+        text = bn_normalize(text)
 
     token_count = len(summ_tokenizer(text)["input_ids"])
     print(f"[inference] Transcript token count: {token_count}")
@@ -298,21 +306,17 @@ def summarize(text: str, num_beams: int = 4, max_input_tokens: int = 480) -> str
 
 
 def _summarize_chunk(text: str, num_beams: int) -> str:
-    """Runs generation on a single chunk of text (<= ~512 tokens)."""
+    """Runs generation on a single chunk of text (<= ~512 tokens).
+    Same settings as the evaluation in the training notebook."""
     prompt = "summarize: " + text
     inputs = summ_tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True).to(DEVICE)
-    n_tokens = inputs["input_ids"].shape[1]
-    min_len, max_len = _length_targets(n_tokens)
-    print(f"[inference] Summary length target: {min_len}-{max_len} tokens (input {n_tokens})")
 
     with torch.no_grad():
         summ_ids = summ_model.generate(
             inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
-            min_length=min_len,
-            max_length=max_len,
+            max_length=SUMMARY_MAX_TOKENS,
             num_beams=num_beams,
-            length_penalty=SUMMARY_LENGTH_PENALTY,
             no_repeat_ngram_size=3,
             early_stopping=True,
         )

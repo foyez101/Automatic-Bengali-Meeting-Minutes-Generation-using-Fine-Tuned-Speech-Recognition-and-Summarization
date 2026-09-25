@@ -18,3 +18,6 @@ transformers
 sentencepiece
 safetensors
 jiwer
+emoji==1.7.0
+ftfy
+regex

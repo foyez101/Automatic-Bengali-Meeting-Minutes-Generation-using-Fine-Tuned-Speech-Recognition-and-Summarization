@@ -4,10 +4,12 @@ venv/
 # Trained model folders (too large for GitHub - share separately)
 whisper-bangla-trained/
 banglat5-summary-trained/
+banglat5-summary-retrained-base/
 
-# Evaluation results (contain dataset transcripts)
+# Evaluation results and dataset splits (contain dataset text)
 eval_results_*.csv
 summary_results_*.csv
+splits/
 
 # Python cache
 __pycache__/
