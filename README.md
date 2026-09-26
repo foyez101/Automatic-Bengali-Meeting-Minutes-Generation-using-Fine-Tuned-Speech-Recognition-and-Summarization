@@ -4,7 +4,7 @@ A web app that turns Bangla speech into a written transcript and a short summary
 
 **Audio → Speech recognition (fine-tuned Whisper-small) → Transcript → Summarization (fine-tuned BanglaT5) → Summary**
 
-Built as part of a thesis project on a Bengali-English code-switched speech dataset for generating meeting minutes.
+Built as part of the thesis *"Automatic Bengali Meeting Minutes Generation using Fine-Tuned Speech Recognition and Abstractive Summarization"*.
 
 ## Features
 
@@ -13,6 +13,124 @@ Built as part of a thesis project on a Bengali-English code-switched speech data
 - Long transcripts are summarized with a map-reduce strategy
 - REST API (FastAPI) that the web page and other clients can call
 - Evaluation script that measures WER, CER and ROUGE on a test set
+
+## How the models were developed
+
+The project went through two versions:
+
+1. **Version 1: Whisper-small + mT5-small.** Whisper-small was fine-tuned for Bangla speech recognition and mT5-small for summarization. The results were not good enough. The Whisper model stopped transcribing after about 10 seconds of speech, so longer recordings had to be cut into very short pieces, and many words came out misspelled (test WER 55.0%). The mT5-small summaries were far too short (about 6.5 words on average, against 24.4 words in the reference summaries) and scored low (ROUGE-L 14.5%).
+2. **Version 2: Whisper-small + BanglaT5 (current).** The summarizer was replaced with BanglaT5, a model pretrained specifically on Bangla text, and fine-tuned on the same data. Whisper-small was fine-tuned further on full-length segments of up to 28 seconds with their complete transcripts. Both models improved substantially (see [Results](#results)).
+
+## Models
+
+| Task | Base model | Folder |
+|---|---|---|
+| Speech recognition | [Whisper-small](https://huggingface.co/openai/whisper-small) | `whisper-bangla-v2/` |
+| Summarization | [BanglaT5](https://huggingface.co/csebuetnlp/banglat5) | `banglat5-summary-retrained-base/` |
+
+Both models were fine-tuned on the project dataset of 1160 Bangla recordings with transcripts and summaries, using a fixed 80/10/10 train/validation/test split (928 / 116 / 116 recordings).
+
+- **Whisper-small:** the recordings were cut into 3713 segments of up to 28 seconds, each paired with its matching part of the transcript. The model was trained on the 2917 training segments (about 13 hours of audio) for 6 epochs (learning rate 1e-5, 100 warmup steps, effective batch size 16), keeping the checkpoint with the lowest validation WER.
+- **BanglaT5:** fine-tuned on the 928 training transcript–summary pairs for up to 20 epochs (learning rate 3e-4, early stopping on validation ROUGE-L).
+
+The trained models are too large for the repository and are published as zip files on the **[v1.0 release page](https://github.com/foyez101/Automatic-Bengali-Meeting-Minutes-Generation-using-Fine-Tuned-Speech-Recognition-and-Summarization/releases/tag/v1.0)** (about 1.8 GB in total).
+
+## Run it locally
+
+The steps below are for Windows (PowerShell). Commands for macOS / Linux are shown where they differ.
+
+### 1. Install the prerequisites
+
+- **Python 3.10 or newer**: [python.org/downloads](https://www.python.org/downloads/)
+- **Git**: [git-scm.com](https://git-scm.com/)
+- **FFmpeg** (used to convert uploaded audio):
+  - Windows: `winget install Gyan.FFmpeg`, then close and reopen the terminal
+  - macOS: `brew install ffmpeg`
+  - Ubuntu / Debian: `sudo apt install ffmpeg`
+- About **4 GB of free RAM** and **4 GB of disk space**. The app runs on CPU; an NVIDIA GPU is used automatically if available.
+
+Check that FFmpeg works:
+
+```powershell
+ffmpeg -version
+```
+
+### 2. Clone the repository
+
+```powershell
+git clone https://github.com/foyez101/Automatic-Bengali-Meeting-Minutes-Generation-using-Fine-Tuned-Speech-Recognition-and-Summarization.git
+cd Automatic-Bengali-Meeting-Minutes-Generation-using-Fine-Tuned-Speech-Recognition-and-Summarization
+```
+
+### 3. Create a virtual environment and install the dependencies
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1          # macOS / Linux: source venv/bin/activate
+
+python -m pip install -r requirements.txt
+
+# BanglaT5 text normalizer (required by the summarizer).
+# --no-deps skips its outdated pinned dependencies; compatible versions
+# of emoji, ftfy and regex come from requirements.txt.
+python -m pip install --no-deps git+https://github.com/csebuetnlp/normalizer
+```
+
+If PowerShell blocks the activate script, run this first (it only affects the current terminal):
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+The Whisper model is saved in the `transformers` 5 format, so `transformers` 5.x is required.
+
+### 4. Download the models
+
+Download both zip files from the [v1.0 release page](https://github.com/foyez101/Automatic-Bengali-Meeting-Minutes-Generation-using-Fine-Tuned-Speech-Recognition-and-Summarization/releases/tag/v1.0) and extract them into the project folder, or run:
+
+```powershell
+$base = "https://github.com/foyez101/Automatic-Bengali-Meeting-Minutes-Generation-using-Fine-Tuned-Speech-Recognition-and-Summarization/releases/download/v1.0"
+curl.exe -L -o whisper-bangla-v2.zip "$base/whisper-bangla-v2.zip"
+curl.exe -L -o banglat5-summary-retrained-base.zip "$base/banglat5-summary-retrained-base.zip"
+tar -xf whisper-bangla-v2.zip
+tar -xf banglat5-summary-retrained-base.zip
+```
+
+On macOS / Linux, use `curl` instead of `curl.exe`, `unzip` instead of `tar -xf`, and set the variable with `base="..."`.
+
+The project folder should now contain:
+
+```
+whisper-bangla-v2/
+banglat5-summary-retrained-base/
+```
+
+The zip files can be deleted afterwards.
+
+### 5. Start the web app
+
+```powershell
+python -m uvicorn app:app --host 127.0.0.1 --port 8000
+```
+
+Wait for `Uvicorn running on http://127.0.0.1:8000` (loading the models takes about a minute), then open **http://127.0.0.1:8000** in your browser, choose an audio file and click **Transcribe & Summarize**.
+
+Processing is much faster on a GPU. On CPU it takes several times the audio length.
+
+To test the pipeline without the web page:
+
+```powershell
+python inference.py "path\to\audio.mp3"
+```
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `FFmpeg is not installed or not available in PATH` | Install FFmpeg (step 1), then close and reopen the terminal |
+| `Summarizer model folder not found` or a Whisper loading error | Check that both model folders sit directly in the project folder, not nested one level deeper (e.g. `whisper-bangla-v2/whisper-bangla-v2/`) |
+| `The Bangla normalizer is not installed` | Run the normalizer install command from step 3 inside the activated venv |
+| PowerShell refuses to run `Activate.ps1` | Run the `Set-ExecutionPolicy` command from step 3 |
 
 ## Project structure
 
@@ -24,71 +142,9 @@ check_dataset.py                    Checks a speech/text/summary dataset before 
 split_dataset.py                    Creates the fixed 80/10/10 train/val/test split
 index.html                          Web interface
 requirements.txt                    Python dependencies
-whisper-bangla-v2/                  Fine-tuned Whisper model (not in repo, see below)
-banglat5-summary-retrained-base/    Fine-tuned BanglaT5 summarizer (not in repo, see below)
+whisper-bangla-v2/                  Fine-tuned Whisper-small (download, see above)
+banglat5-summary-retrained-base/    Fine-tuned BanglaT5 (download, see above)
 ```
-
-## Requirements
-
-- Python 3.10 or newer
-- [FFmpeg](https://ffmpeg.org/) installed and available in PATH (used to convert uploaded audio)
-  - Windows: `winget install Gyan.FFmpeg`, then restart the terminal
-- About 4 GB of free RAM. Runs on CPU; an NVIDIA GPU is used automatically if available
-- `transformers` 5.x (the Whisper model is saved in the transformers 5 format)
-
-## Models
-
-The trained model folders are too large for GitHub (about 2 GB in total), so they are not included in this repository.
-
-Download them from: **[add model download link here]**
-
-Place both folders directly in the project root:
-
-```
-whisper-bangla-v2/
-banglat5-summary-retrained-base/
-```
-
-**Speech recognition:** Whisper-small, further fine-tuned on the project dataset. The 1160 recordings were cut into 3713 segments of up to 28 seconds, each paired with its matching part of the reference transcript. The model was trained on the 2917 training segments (about 13 hours of audio) for 6 epochs (learning rate 1e-5, 100 warmup steps, effective batch size 16), keeping the checkpoint with the lowest validation WER.
-
-**Summarization:** [BanglaT5](https://huggingface.co/csebuetnlp/banglat5) fine-tuned on 928 transcript–summary pairs from the project dataset (80/10/10 train/validation/test split). Its folder must contain `spiece.model`; if it is missing, copy it from the original BanglaT5:
-
-```powershell
-python -c "from huggingface_hub import hf_hub_download; import shutil; p = hf_hub_download('csebuetnlp/banglat5', 'spiece.model'); shutil.copy(p, 'banglat5-summary-retrained-base/spiece.model')"
-```
-
-## Setup
-
-```powershell
-# 1. Create and activate a virtual environment
-python -m venv venv
-.\venv\Scripts\Activate.ps1          # Windows (PowerShell)
-# source venv/bin/activate           # macOS / Linux
-
-# 2. Install dependencies
-python -m pip install -r requirements.txt
-
-# 3. Install the BanglaT5 text normalizer (required by the summarizer).
-#    --no-deps skips its outdated pinned dependencies; compatible versions
-#    of emoji, ftfy and regex come from requirements.txt.
-python -m pip install --no-deps git+https://github.com/csebuetnlp/normalizer
-```
-
-If PowerShell blocks the activate script, run this first (affects the current terminal only):
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
-
-## Run the web app
-
-```powershell
-python -m uvicorn app:app --host 127.0.0.1 --port 8000
-```
-
-Wait for `Uvicorn running on http://127.0.0.1:8000` (model loading takes about a minute), then open **http://127.0.0.1:8000** in your browser.
-
-Processing is much faster on a GPU. On CPU it takes several times the audio length.
 
 ## API
 
@@ -130,43 +186,54 @@ Settings at the top of `inference.py`:
 | `SILENCE_TOP_DB` | 30 | Pause-detection sensitivity |
 | `ASR_NUM_BEAMS` | 1 | Greedy decoding (same as the reported evaluation); raise to 4 for slightly different output at ~3–4× the CPU time |
 | `MT5_DIR` | `banglat5-summary-retrained-base` | Summarizer model folder |
-| `SUMMARY_USE_NORMALIZER` | True | Apply the BanglaT5 normalizer before summarizing (required for the retrained model) |
+| `SUMMARY_USE_NORMALIZER` | True | Apply the BanglaT5 normalizer before summarizing (required for this model) |
 | `SUMMARY_NUM_BEAMS` | 4 | Beam search width for summaries |
 
 ## Results
 
-All results are on the 116 held-out test clips, which were not used for training or for choosing settings.
+All results are on the 116 held-out test recordings, which were not used for training or for choosing settings.
 
-**Speech recognition** (full clips, split into chunks of up to 20 s):
+**Version 1 vs version 2:**
 
-| Model | WER | CER |
-|---|---|---|
-| Previous Whisper model | 55.0% | 22.6% |
-| Whisper, retrained (`whisper-bangla-v2`) | **17.3%** | **6.0%** |
+| Component | Metric | Version 1 | Version 2 (current) |
+|---|---|---|---|
+| Speech recognition (Whisper-small) | WER | 55.0% | **17.3%** |
+| | CER | 22.6% | **6.0%** |
+| Summarization (v1: mT5-small, v2: BanglaT5) | ROUGE-1 | 15.7% | **30.4%** |
+| | ROUGE-2 | 4.4% | **11.1%** |
+| | ROUGE-L | 14.5% | **25.3%** |
+| | Avg. summary words | 6.5 | **21.4** |
 
-The chunk length was chosen on the validation clips (WER with 10 s chunks: 20.9%, 20 s: 18.8%, 28 s: 25.6%). On the 361 test segments (up to 28 s each), WER fell from 65.1% to 16.0% and CER from 42.9% to 5.0%.
+Speech recognition was scored on full recordings; summarization was scored with the reference transcripts as input, so the two parts are measured separately.
 
-**Full pipeline** (audio → transcript → summary, compared with the reference summaries):
+**Speech recognition details** (version 2, full recordings split into chunks of up to 20 s):
+
+| Metric | Result |
+|---|---|
+| WER | **17.3%** |
+| CER | **6.0%** |
+
+The chunk length was chosen on the validation recordings (WER with 10 s chunks: 20.9%, 20 s: 18.8%, 28 s: 25.6%). On the 361 test segments of up to 28 s, WER is 16.0% and CER 5.0%.
+
+**Full pipeline** (fine-tuned BanglaT5 summaries compared with the reference summaries):
 
 | Summary made from | ROUGE-1 | ROUGE-2 | ROUGE-L | Avg. summary words |
 |---|---|---|---|---|
 | Reference transcript (upper limit) | 29.0% | 10.7% | 24.5% | 24.2 |
-| Retrained Whisper transcript | **29.3%** | **10.3%** | **24.6%** | 23.9 |
-| Previous Whisper transcript | 22.1% | 5.7% | 18.6% | 22.0 |
+| Whisper transcript (audio → summary) | **29.3%** | **10.3%** | **24.6%** | 23.9 |
 
-With the retrained Whisper, summaries from speech are as good as summaries from the reference transcripts. Reference summaries average 24.4 words.
-
-**Summarizer only** (reference transcripts as input, scored during summarizer training):
-
-| Model | ROUGE-1 | ROUGE-2 | ROUGE-L | Avg. summary words |
-|---|---|---|---|---|
-| Previous summarizer | 15.7% | 4.4% | 14.5% | 6.5 |
-| BanglaT5, retrained | 30.4% | 11.1% | 25.3% | 21.4 |
-
-These last numbers were computed in a separate evaluation, so they differ slightly from the reference-transcript row of the full-pipeline table.
+Summaries generated directly from speech are as good as summaries generated from the reference transcripts. Reference summaries average 24.4 words.
 
 ## Known limitations
 
-- Transcripts are sometimes misspelled, especially for conjuncts (যুক্তাক্ষর), vowel signs and numbers (for example ঢাকা-৮ written out as words)
-- Summaries can swap names and numbers or state facts that are not in the transcript; ROUGE does not capture factual errors, so outputs should be checked
-- Processing is slow on CPU
+- The training data is read, news-style Bangla speech from one speaker at a time. Spontaneous conversation, several overlapping speakers and English technical terms are transcribed less accurately.
+- Transcripts are sometimes misspelled, especially for conjuncts (যুক্তাক্ষর), vowel signs and numbers.
+- Summaries can swap names and numbers or state facts that are not in the transcript. ROUGE does not capture factual errors, so outputs should be checked.
+- Speaker diarization (who said what) and structured meeting minutes are not implemented yet (see Future work).
+- Processing is slow on CPU.
+
+## Future work
+
+- **Speaker diarization:** identify who is speaking when, so transcripts of multi-speaker meetings can be labelled by speaker.
+- **Meeting minutes generation:** turn a speaker-labelled meeting transcript into structured minutes (participants, discussion points, decisions and action items) instead of a single free-text summary.
+- **More varied training data:** add spontaneous, multi-speaker meeting recordings and Bangla speech mixed with English terms, to improve accuracy on real meetings.
