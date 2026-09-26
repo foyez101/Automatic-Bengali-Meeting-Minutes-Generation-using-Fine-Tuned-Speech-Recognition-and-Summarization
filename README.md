@@ -9,7 +9,7 @@ Built as part of a thesis project on a Bengali-English code-switched speech data
 ## Features
 
 - Web interface for uploading audio (MP3, WAV, WEBM, OGG, up to 25 MB)
-- Handles audio of any length: speech is split into short chunks at natural pauses before transcription
+- Handles audio of any length: speech is split into chunks of up to 20 seconds at natural pauses before transcription
 - Long transcripts are summarized with a map-reduce strategy
 - REST API (FastAPI) that the web page and other clients can call
 - Evaluation script that measures WER, CER and ROUGE on a test set
@@ -24,7 +24,7 @@ check_dataset.py                    Checks a speech/text/summary dataset before 
 split_dataset.py                    Creates the fixed 80/10/10 train/val/test split
 index.html                          Web interface
 requirements.txt                    Python dependencies
-whisper-bangla-trained/             Fine-tuned Whisper model (not in repo, see below)
+whisper-bangla-v2/                  Fine-tuned Whisper model (not in repo, see below)
 banglat5-summary-retrained-base/    Fine-tuned BanglaT5 summarizer (not in repo, see below)
 ```
 
@@ -34,6 +34,7 @@ banglat5-summary-retrained-base/    Fine-tuned BanglaT5 summarizer (not in repo,
 - [FFmpeg](https://ffmpeg.org/) installed and available in PATH (used to convert uploaded audio)
   - Windows: `winget install Gyan.FFmpeg`, then restart the terminal
 - About 4 GB of free RAM. Runs on CPU; an NVIDIA GPU is used automatically if available
+- `transformers` 5.x (the Whisper model is saved in the transformers 5 format)
 
 ## Models
 
@@ -44,11 +45,13 @@ Download them from: **[add model download link here]**
 Place both folders directly in the project root:
 
 ```
-whisper-bangla-trained/
+whisper-bangla-v2/
 banglat5-summary-retrained-base/
 ```
 
-The summarizer is [BanglaT5](https://huggingface.co/csebuetnlp/banglat5) fine-tuned on 928 transcript–summary pairs from the project dataset (80/10/10 train/validation/test split). Its folder must contain `spiece.model`; if it is missing, copy it from the original BanglaT5:
+**Speech recognition:** Whisper-small, further fine-tuned on the project dataset. The 1160 recordings were cut into 3713 segments of up to 28 seconds, each paired with its matching part of the reference transcript. The model was trained on the 2917 training segments (about 13 hours of audio) for 6 epochs (learning rate 1e-5, 100 warmup steps, effective batch size 16), keeping the checkpoint with the lowest validation WER.
+
+**Summarization:** [BanglaT5](https://huggingface.co/csebuetnlp/banglat5) fine-tuned on 928 transcript–summary pairs from the project dataset (80/10/10 train/validation/test split). Its folder must contain `spiece.model`; if it is missing, copy it from the original BanglaT5:
 
 ```powershell
 python -c "from huggingface_hub import hf_hub_download; import shutil; p = hf_hub_download('csebuetnlp/banglat5', 'spiece.model'); shutil.copy(p, 'banglat5-summary-retrained-base/spiece.model')"
@@ -85,7 +88,7 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8000
 
 Wait for `Uvicorn running on http://127.0.0.1:8000` (model loading takes about a minute), then open **http://127.0.0.1:8000** in your browser.
 
-On CPU, processing takes roughly 5–6× the audio length.
+Processing is much faster on a GPU. On CPU it takes several times the audio length.
 
 ## API
 
@@ -121,26 +124,49 @@ Settings at the top of `inference.py`:
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `CHUNK_MAX_S` | 10.0 | Maximum audio length per ASR chunk (seconds) |
+| `WHISPER_DIR` | `whisper-bangla-v2` | Speech recognition model folder |
+| `CHUNK_MAX_S` | 20.0 | Maximum audio length per ASR chunk (seconds); 20 s gave the lowest validation WER |
+| `CUT_SEARCH_S` | 8.0 | If there is no clear pause, cut at the quietest point in the last N seconds before the limit |
 | `SILENCE_TOP_DB` | 30 | Pause-detection sensitivity |
-| `ASR_NUM_BEAMS` | 4 | Lower to 1–2 for faster transcription on CPU |
+| `ASR_NUM_BEAMS` | 1 | Greedy decoding (same as the reported evaluation); raise to 4 for slightly different output at ~3–4× the CPU time |
 | `MT5_DIR` | `banglat5-summary-retrained-base` | Summarizer model folder |
 | `SUMMARY_USE_NORMALIZER` | True | Apply the BanglaT5 normalizer before summarizing (required for the retrained model) |
 | `SUMMARY_NUM_BEAMS` | 4 | Beam search width for summaries |
 
 ## Results
 
-Summarizer, on the 116 held-out test clips (reference transcripts as input):
+All results are on the 116 held-out test clips, which were not used for training or for choosing settings.
+
+**Speech recognition** (full clips, split into chunks of up to 20 s):
+
+| Model | WER | CER |
+|---|---|---|
+| Previous Whisper model | 55.0% | 22.6% |
+| Whisper, retrained (`whisper-bangla-v2`) | **17.3%** | **6.0%** |
+
+The chunk length was chosen on the validation clips (WER with 10 s chunks: 20.9%, 20 s: 18.8%, 28 s: 25.6%). On the 361 test segments (up to 28 s each), WER fell from 65.1% to 16.0% and CER from 42.9% to 5.0%.
+
+**Full pipeline** (audio → transcript → summary, compared with the reference summaries):
+
+| Summary made from | ROUGE-1 | ROUGE-2 | ROUGE-L | Avg. summary words |
+|---|---|---|---|---|
+| Reference transcript (upper limit) | 29.0% | 10.7% | 24.5% | 24.2 |
+| Retrained Whisper transcript | **29.3%** | **10.3%** | **24.6%** | 23.9 |
+| Previous Whisper transcript | 22.1% | 5.7% | 18.6% | 22.0 |
+
+With the retrained Whisper, summaries from speech are as good as summaries from the reference transcripts. Reference summaries average 24.4 words.
+
+**Summarizer only** (reference transcripts as input, scored during summarizer training):
 
 | Model | ROUGE-1 | ROUGE-2 | ROUGE-L | Avg. summary words |
 |---|---|---|---|---|
 | Previous summarizer | 15.7% | 4.4% | 14.5% | 6.5 |
 | BanglaT5, retrained | 30.4% | 11.1% | 25.3% | 21.4 |
 
-Reference summaries average 24.4 words.
+These last numbers were computed in a separate evaluation, so they differ slightly from the reference-transcript row of the full-pipeline table.
 
 ## Known limitations
 
-- Transcripts are often phonetically correct but misspelled, especially for conjuncts (যুক্তাক্ষর) and vowel signs
-- Summaries can swap names and numbers for similar-looking ones and can repeat words; ROUGE does not capture factual errors, so outputs should be checked
+- Transcripts are sometimes misspelled, especially for conjuncts (যুক্তাক্ষর), vowel signs and numbers (for example ঢাকা-৮ written out as words)
+- Summaries can swap names and numbers or state facts that are not in the transcript; ROUGE does not capture factual errors, so outputs should be checked
 - Processing is slow on CPU

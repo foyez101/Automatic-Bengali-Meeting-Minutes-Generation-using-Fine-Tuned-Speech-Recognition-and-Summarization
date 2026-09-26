@@ -1,15 +1,15 @@
 """
 inference.py
 ------------
-Loads the fine-tuned Whisper (ASR) and mT5 (summarization) models ONCE at
+Loads the fine-tuned Whisper (ASR) and BanglaT5 (summarization) models ONCE at
 process startup, and exposes a single function that runs the full
 transcribe -> summarize pipeline. Import this module from your web server
 (FastAPI, Flask, Django, etc.) instead of reloading the models per request.
 
 Directory layout expected (adjust the paths below):
     MODEL_ROOT/
-        whisper-bangla-trained/
-        banglat5-summary-trained/
+        whisper-bangla-v2/
+        banglat5-summary-retrained-base/
 """
 
 import os
@@ -43,7 +43,7 @@ from transformers import (
 # Model folders sit directly in the project root. Run the app from this
 # folder, or set the MODEL_ROOT environment variable to point elsewhere.
 MODEL_ROOT = Path(os.environ.get("MODEL_ROOT", "."))
-WHISPER_DIR = MODEL_ROOT / "whisper-bangla-trained"
+WHISPER_DIR = MODEL_ROOT / "whisper-bangla-v2"
 # Summarizer: BanglaT5 retrained on the full dataset (Kaggle, v2 notebook).
 # Change to "banglat5-summary-trained" to go back to the old model
 # (and set SUMMARY_USE_NORMALIZER = False for it).
@@ -52,19 +52,19 @@ SUMMARY_USE_NORMALIZER = True   # the retrained BanglaT5 was trained on normaliz
 
 SAMPLE_RATE = 16000
 
-# ASR chunking: the fine-tuned Whisper model stops transcribing after
-# ~10 seconds of speech, so audio is split into short chunks, cutting at
-# natural pauses (silences) so words are not cut in half.
-CHUNK_MAX_S = 10.0      # max chunk length fed to Whisper
+# ASR chunking: the retrained Whisper (v2) was trained on segments up to 28 s.
+# 20 s chunks gave the lowest validation WER (10 s: 20.9%, 20 s: 18.8%, 28 s: 25.6%).
+# Audio is split at natural pauses (silences) so words are not cut in half.
+CHUNK_MAX_S = 20.0      # max chunk length fed to Whisper
 CHUNK_MIN_S = 3.0       # a leftover chunk shorter than this is merged into the previous one
 SILENCE_TOP_DB = 30     # how quiet (dB below peak) counts as a clear pause; lower = more pauses found
-CUT_SEARCH_S = 3.0      # if no clear pause, cut at the quietest point in the last N seconds before the limit
+CUT_SEARCH_S = 8.0      # if no clear pause, cut at the quietest point in the last N seconds before the limit
 ASR_NUM_BEAMS = 4       # lower to 1-2 for faster (slightly less accurate) transcription on CPU
 
 # Summary generation: the retrained model learned summary length from the
 # data, so no minimum length is forced (forcing it caused invented content).
 SUMMARY_MAX_TOKENS = 256
-SUMMARY_NUM_BEAMS = 4
+SUMMARY_NUM_BEAMS = 1
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # FFmpeg is found automatically from PATH, so this works on any PC
